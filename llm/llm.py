@@ -1,5 +1,4 @@
 import requests
-import json
 import os
 from llm.exceptions.llm_exceptions import KazakhLLMError
 class LLM:
@@ -21,7 +20,7 @@ class LLM:
         try:
             response = requests.post(url, headers=headers, json=payload)
             response.encoding='utf-8'
-            response.raise_for_status()
+            response.encoding = 'utf-8'
             result = response.json()
             print(result)
 
@@ -31,6 +30,34 @@ class LLM:
             return result["choices"][0]["message"].get("content", text).strip()
         except requests.exceptions.RequestException as e:
             raise KazakhLLMError("Kazakh LLM unreachable")
+        
+    def _get_russian_llm_response(self, text, url="http://localhost:1234/v1/chat/completions"):
+        headers = {"Content-Type": "application/json; charset=utf-8"}
+        payload = {
+            "model": "checkpoints_llama8b_031224_18900",
+            "messages": [
+                {"role": "system", "content": "Вам дали транскрипцию. Улучшите ее и верните исправленный вариант. ТОЛЬКО исправленный вариант, ничего больше"},
+                {"role": "user", "content": text}
+            ],
+            "max_tokens": -1,  # Control output length
+            "stop": ["\n\n", "Қосымша"],  # Stop generation if unwanted text appears
+            "temperature": 0.1,  # Reduce randomness for better consistency
+            "top_p": 0.95,
+        }
+
+        try:
+            response = requests.post(url, headers=headers, json=payload)
+            response.encoding='utf-8'
+            response.raise_for_status()
+            result = response.json()
+            print(result)
+
+            if "choices" not in result or not result["choices"]:
+                raise KazakhLLMError("Invalid response format from Russian LLM")
+            
+            return result["choices"][0]["message"].get("content", text).strip()
+        except requests.exceptions.RequestException as e:
+            raise KazakhLLMError("Russian LLM unreachable")
     
     def improve_kazakh_transcription(self, text_or_path, prompt_path="llm/prompts/improve_transcription_prompt_kz.txt"):
         try:                
@@ -42,6 +69,22 @@ class LLM:
             combined_text = transcription + "\nprompt:\n" + prompt
             
             improved_transcription = self._get_kazakh_llm_response(combined_text)
+            
+            return improved_transcription
+        except Exception as e:
+            print(f"Error during improve_kazakh_transcription: {e}")
+            return None
+    
+    def improve_russian_transcription(self, text_or_path, prompt_path="llm/prompts/improve_transcription_prompt_rus.txt"):
+        try:                
+            transcription = self._smart_text_detect(text_or_path)
+            
+            with open(prompt_path, 'r', encoding='utf-8') as prompt_file:
+                prompt = prompt_file.read()
+            
+            combined_text = transcription + "\nprompt:\n" + prompt
+            
+            improved_transcription = self._get_russian_llm_response(combined_text)
             
             return improved_transcription
         except Exception as e:

@@ -1,0 +1,7 @@
+pybind11
+plac
+numpy
+loguru
+termcolor
+Levenshtein
+regex

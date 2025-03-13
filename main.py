@@ -1,15 +1,29 @@
-from transcription.transcriber import Transcriber
+from transcription.transcribe import Transcriber
 from llm.llm import LLM
+import keyboard
+import time
 
 class Orchestrator:
     def __init__(self):
         self.transcriber = Transcriber()
         self.llm = LLM()
+        self.stop_flag = False
+
+        # Register the keyboard event correctly
+        keyboard.on_press_key("q", self.stop_recording)
+
+    def stop_recording(self, event):  # Accepts event argument
+        print("Stopping recording...")  # Feedback when key is pressed
+        self.stop_flag = True
 
     def orchestrate_kazakh(self):
         print("Starting transcription from microphone...")
-        self.transcriber.transcribe_kazakh_from_microphone()
+        print("Press 'q' to stop recording.")
         
+        while not self.stop_flag:
+            self.transcriber.record_and_transcribe(chunk_length_s=5)
+            time.sleep(0.1)
+
         with open("transcription.txt", "r", encoding="utf-8") as f:
             transcription = f.read()
 
