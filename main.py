@@ -3,6 +3,7 @@ from llm.llm import LLM
 import keyboard
 import time
 
+
 class Orchestrator:
     def __init__(self):
         self.transcriber = Transcriber()
@@ -19,7 +20,7 @@ class Orchestrator:
     def orchestrate_kazakh(self):
         print("Starting transcription from microphone...")
         print("Press 'q' to stop recording.")
-        
+
         while not self.stop_flag:
             self.transcriber.record_and_transcribe(chunk_length_s=5)
             time.sleep(0.1)
@@ -38,7 +39,10 @@ class Orchestrator:
         with open("summary.txt", "w", encoding="utf-8") as f:
             f.write(summary)
 
-        print("Orchestration complete. Transcription, improved transcription, and summary saved.")
+        print(
+            "Orchestration complete. Transcription, improved transcription, and summary saved."
+        )
+
 
 if __name__ == "__main__":
     orchestrator = Orchestrator()

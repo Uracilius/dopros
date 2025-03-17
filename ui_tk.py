@@ -7,13 +7,22 @@ from transcription.transcribe import Transcriber
 from llm.llm import LLM
 from enums import Language
 
+
 class RecorderThread(threading.Thread):
     """
-    Thread that continuously records audio in chunks, then emits final 
+    Thread that continuously records audio in chunks, then emits final
     transcriptions and improved transcriptions once stopped.
     """
-    def __init__(self, transcriber, llm, chunk_length_s=5, language=Language.RUSSIAN.value,
-                 on_transcription_done=None, on_improved_transcription_done=None):
+
+    def __init__(
+        self,
+        transcriber,
+        llm,
+        chunk_length_s=5,
+        language=Language.RUSSIAN.value,
+        on_transcription_done=None,
+        on_improved_transcription_done=None,
+    ):
         super().__init__()
         self.transcriber = transcriber
         self.llm = llm
@@ -25,13 +34,15 @@ class RecorderThread(threading.Thread):
 
     def run(self):
         while not self._stop_flag:
-            text = self.transcriber.record_and_transcribe(chunk_length_s=self.chunk_length_s)
+            text = self.transcriber.record_and_transcribe(
+                chunk_length_s=self.chunk_length_s
+            )
             if self.on_transcription_done:
                 self.on_transcription_done(text)
             time.sleep(0.1)
 
         # Once stopped, read the collected transcription from file
-        transcription = ''
+        transcription = ""
         with open("transcription/transcription.txt", "r", encoding="utf-8") as f:
             transcription = f.read()
 
@@ -49,7 +60,7 @@ class RecorderThread(threading.Thread):
 
         # Clear the file contents
         with open("transcription/transcription.txt", "w", encoding="utf-8") as f:
-            f.write('')
+            f.write("")
 
     def stop(self):
         self._stop_flag = True
@@ -96,8 +107,11 @@ class MainWindow(tk.Tk):
             container,
             text="Mic",
             command=self.go_to_second_screen,
-            bg="#3e3e42", fg="#ffffff", activebackground="#505050",
-            width=20, height=10  # approximate “big” button
+            bg="#3e3e42",
+            fg="#ffffff",
+            activebackground="#505050",
+            width=20,
+            height=10,  # approximate “big” button
         )
         self.mic_button.pack(side="left", expand=True, fill="both")
 
@@ -105,8 +119,11 @@ class MainWindow(tk.Tk):
         self.list_button = tk.Button(
             container,
             text="List",
-            bg="#3e3e42", fg="#ffffff", activebackground="#505050",
-            width=20, height=10
+            bg="#3e3e42",
+            fg="#ffffff",
+            activebackground="#505050",
+            width=20,
+            height=10,
         )
         self.list_button.pack(side="left", expand=True, fill="both")
 
@@ -123,8 +140,11 @@ class MainWindow(tk.Tk):
             top_frame,
             text="Record",
             command=self.start_recording,
-            bg="#3e3e42", fg="#ffffff", activebackground="#505050",
-            width=8, height=2
+            bg="#3e3e42",
+            fg="#ffffff",
+            activebackground="#505050",
+            width=8,
+            height=2,
         )
         self.record_button.pack(side="left", padx=5)
 
@@ -132,8 +152,11 @@ class MainWindow(tk.Tk):
             top_frame,
             text="Stop",
             command=self.stop_recording,
-            bg="#3e3e42", fg="#ffffff", activebackground="#505050",
-            width=8, height=2
+            bg="#3e3e42",
+            fg="#ffffff",
+            activebackground="#505050",
+            width=8,
+            height=2,
         )
         self.stop_button.pack(side="left", padx=5)
         self.stop_button.pack_forget()  # hidden by default
@@ -142,8 +165,11 @@ class MainWindow(tk.Tk):
             top_frame,
             text="Back",
             command=self.go_to_main_screen,
-            bg="#3e3e42", fg="#ffffff", activebackground="#505050",
-            width=5, height=2
+            bg="#3e3e42",
+            fg="#ffffff",
+            activebackground="#505050",
+            width=5,
+            height=2,
         )
         self.back_button.pack(side="left", padx=5)
 
@@ -151,8 +177,11 @@ class MainWindow(tk.Tk):
             top_frame,
             text="RUS",
             command=self.toggle_language,
-            bg="#3e3e42", fg="#ffffff", activebackground="#505050",
-            width=5, height=2
+            bg="#3e3e42",
+            fg="#ffffff",
+            activebackground="#505050",
+            width=5,
+            height=2,
         )
         self.language_button.pack(side="left", padx=5)
 
@@ -161,18 +190,16 @@ class MainWindow(tk.Tk):
         textboxes_frame.pack(expand=True, fill="both")
 
         self.transcription_textbox = tk.Text(
-            textboxes_frame,
-            bg="#1e1e1e", fg="#c0c0c0",
-            width=35, height=15
+            textboxes_frame, bg="#1e1e1e", fg="#c0c0c0", width=35, height=15
         )
         self.transcription_textbox.pack(side="left", expand=True, fill="both", padx=5)
 
         self.improved_transcription_textbox = tk.Text(
-            textboxes_frame,
-            bg="#1e1e1e", fg="#c0c0c0",
-            width=35, height=15
+            textboxes_frame, bg="#1e1e1e", fg="#c0c0c0", width=35, height=15
         )
-        self.improved_transcription_textbox.pack(side="left", expand=True, fill="both", padx=5)
+        self.improved_transcription_textbox.pack(
+            side="left", expand=True, fill="both", padx=5
+        )
 
     def show_frame(self, frame):
         frame.tkraise()
@@ -195,7 +222,7 @@ class MainWindow(tk.Tk):
             chunk_length_s=5,
             language=self.language,
             on_transcription_done=self.handle_transcription,
-            on_improved_transcription_done=self.handle_improved_transcription
+            on_improved_transcription_done=self.handle_improved_transcription,
         )
         self.recorder_thread.start()
 

@@ -9,19 +9,23 @@ import nemo.utils
 import warnings
 from pydub import AudioSegment
 import os
+
 # Suppress extra logs
 logging.getLogger("nemo_logger").setLevel(logging.ERROR)
 nemo.utils.logging.setLevel(logging.ERROR)
 warnings.filterwarnings("ignore", category=UserWarning)
 
+
 class Transcriber:
     def __init__(
         self,
-        model_path="transcription/transcription_model/stt_kk_ru_fastconformer_hybrid_large.nemo"
+        model_path="transcription/transcription_model/stt_kk_ru_fastconformer_hybrid_large.nemo",
     ):
 
         # Restore model and move it to the chosen device
-        self.model = nemo_asr.models.EncDecHybridRNNTCTCBPEModel.restore_from(model_path)
+        self.model = nemo_asr.models.EncDecHybridRNNTCTCBPEModel.restore_from(
+            model_path
+        )
 
     def transcribe_audio(self, file_path):
         """
@@ -48,7 +52,7 @@ class Transcriber:
             channels=1,
             rate=16000,
             input=True,
-            frames_per_buffer=1024
+            frames_per_buffer=1024,
         )
 
         frames = []
@@ -65,14 +69,16 @@ class Transcriber:
                     wf.setnchannels(1)
                     wf.setsampwidth(p.get_sample_size(pyaudio.paInt16))
                     wf.setframerate(16000)
-                    wf.writeframes(b''.join(frames))
+                    wf.writeframes(b"".join(frames))
 
             # Transcribe the temporary file
             transcription = self.transcribe_audio(wav_filename)
 
             # Save the transcription to a file
             if transcription:
-                with open("transcription/transcription.txt", "a", encoding="utf-8") as f:
+                with open(
+                    "transcription/transcription.txt", "a", encoding="utf-8"
+                ) as f:
                     f.write(transcription + "\n")
 
             return transcription
@@ -91,14 +97,15 @@ class Transcriber:
         """
         audio = AudioSegment.from_wav(input_path)
         chunk_paths = []
-        
+
         for i, start in enumerate(range(0, len(audio), chunk_length_ms)):
-            chunk = audio[start:start + chunk_length_ms]
+            chunk = audio[start : start + chunk_length_ms]
             chunk_path = f"/tmp/chunk_{i}.wav"
             chunk.export(chunk_path, format="wav")
             chunk_paths.append(chunk_path)
-        
+
         return chunk_paths
+
 
 # if __name__ == "__main__":
 #     ### Streamlit UI ###
@@ -123,9 +130,11 @@ class Transcriber:
 if __name__ == "__main__":
     transcriber = Transcriber()
     input_file = r"/home/orangepi/Desktop/dopros/transcription/input.wav"
-    
-    chunk_paths = transcriber.chunk_audio(input_file, chunk_length_ms=10000)  # 10 seconds
-    
+
+    chunk_paths = transcriber.chunk_audio(
+        input_file, chunk_length_ms=10000
+    )  # 10 seconds
+
     with open("transcription.txt", "w", encoding="utf-8") as f:
         for chunk_path in chunk_paths:
             transcription = transcriber.transcribe_audio(chunk_path)
@@ -133,5 +142,5 @@ if __name__ == "__main__":
                 f.write(transcription + "\n")
                 print(f"Chunk Transcription: {transcription}")
             os.remove(chunk_path)  # Clean up temporary chunk files
-    
+
     print("Transcription saved to transcription.txt")
