@@ -3,9 +3,9 @@ import threading
 import time
 import sys
 
-from transcription.transcribe import Transcriber
-from llm.llm import LLM
-from enums import Language
+from src.transcription.transcribe import Transcriber
+from src.llm.llm import LLM
+from src.enums import Language
 
 
 class RecorderThread(threading.Thread):
@@ -43,7 +43,7 @@ class RecorderThread(threading.Thread):
 
         # Once stopped, read the collected transcription from file
         transcription = ""
-        with open("transcription/transcription.txt", "r", encoding="utf-8") as f:
+        with open("results/transcription.txt", "r", encoding="utf-8") as f:
             transcription = f.read()
 
         if self.on_transcription_done:
@@ -59,7 +59,7 @@ class RecorderThread(threading.Thread):
             self.on_improved_transcription_done(improved)
 
         # Clear the file contents
-        with open("transcription/transcription.txt", "w", encoding="utf-8") as f:
+        with open("results/transcription.txt", "w", encoding="utf-8") as f:
             f.write("")
 
     def stop(self):

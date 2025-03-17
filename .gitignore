@@ -1,6 +1,11 @@
+#Custom for this project
 transcription_model/
 nemo_venv/
 *.wav
+*.mp3
+transcription.txt
+summary.txt
+improved_transcription.txt
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
