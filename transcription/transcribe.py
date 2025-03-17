@@ -1,4 +1,4 @@
-import streamlit as st
+# import streamlit as st
 import nemo.collections.asr as nemo_asr
 import torch
 import pyaudio
@@ -7,7 +7,8 @@ import tempfile
 import logging
 import nemo.utils
 import warnings
-
+from pydub import AudioSegment
+import os
 # Suppress extra logs
 logging.getLogger("nemo_logger").setLevel(logging.ERROR)
 nemo.utils.logging.setLevel(logging.ERROR)
@@ -84,23 +85,53 @@ class Transcriber:
             stream.close()
             p.terminate()
 
-if __name__ == "__main__":
-    ### Streamlit UI ###
-    st.title("Стенограмма речи, смешанная(kk/rus)")
-
-    # Create the Transcriber once in session state
-    if "transcriber" not in st.session_state:
-        st.session_state.transcriber = Transcriber()
-
-    if st.button("Начать запись"):
-
-        all_transcriptions = []
-        for i in range(1, 11):
-            text = st.session_state.transcriber.record_and_transcribe(chunk_length_s=5)
-            if len(text) > 1:
-                all_transcriptions.append(text)
-                st.write(f"*: {text}")
-            else:
-                all_transcriptions.append("")
-                st.write(f"*: (Нет речи)")
+    def chunk_audio(self, input_path, chunk_length_ms=10000):
+        """
+        Splits an audio file into chunks of chunk_length_ms (milliseconds) and saves them to /tmp.
+        """
+        audio = AudioSegment.from_wav(input_path)
+        chunk_paths = []
         
+        for i, start in enumerate(range(0, len(audio), chunk_length_ms)):
+            chunk = audio[start:start + chunk_length_ms]
+            chunk_path = f"/tmp/chunk_{i}.wav"
+            chunk.export(chunk_path, format="wav")
+            chunk_paths.append(chunk_path)
+        
+        return chunk_paths
+
+# if __name__ == "__main__":
+#     ### Streamlit UI ###
+#     st.title("Стенограмма речи, смешанная(kk/rus)")
+
+#     # Create the Transcriber once in session state
+#     if "transcriber" not in st.session_state:
+#         st.session_state.transcriber = Transcriber()
+
+#     if st.button("Начать запись"):
+
+#         all_transcriptions = []
+#         for i in range(1, 11):
+#             text = st.session_state.transcriber.record_and_transcribe(chunk_length_s=5)
+#             if len(text) > 1:
+#                 all_transcriptions.append(text)
+#                 st.write(f"*: {text}")
+#             else:
+#                 all_transcriptions.append("")
+#                 st.write(f"*: (Нет речи)")
+
+if __name__ == "__main__":
+    transcriber = Transcriber()
+    input_file = r"/home/orangepi/Desktop/dopros/transcription/input.wav"
+    
+    chunk_paths = transcriber.chunk_audio(input_file, chunk_length_ms=10000)  # 10 seconds
+    
+    with open("transcription.txt", "w", encoding="utf-8") as f:
+        for chunk_path in chunk_paths:
+            transcription = transcriber.transcribe_audio(chunk_path)
+            if transcription:
+                f.write(transcription + "\n")
+                print(f"Chunk Transcription: {transcription}")
+            os.remove(chunk_path)  # Clean up temporary chunk files
+    
+    print("Transcription saved to transcription.txt")

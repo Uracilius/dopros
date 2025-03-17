@@ -1,9 +1,12 @@
-from PyQt6.QtWidgets import QApplication, QMainWindow, QPushButton, QWidget, QHBoxLayout, QVBoxLayout, QStackedWidget, QStyle, QPlainTextEdit
-from PyQt6.QtCore import QThread, pyqtSignal
-from transcription.transcribe import Transcriber
-from llm.llm import LLM
+import PyQt5.sip
+
+from PyQt5.QtWidgets import QApplication, QMainWindow, QPushButton, QWidget, QHBoxLayout, QVBoxLayout, QStackedWidget, QStyle, QPlainTextEdit
+from PyQt5.QtCore import QThread, pyqtSignal
 import sys
 import time
+
+from transcription.transcribe import Transcriber
+from llm.llm import LLM
 from enums import Language
 
 class RecorderThread(QThread):
@@ -58,12 +61,12 @@ class MainWindow(QMainWindow):
         main_layout = QHBoxLayout()
         
         self.mic_button = QPushButton()
-        self.mic_button.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_MediaVolume))
+        self.mic_button.setIcon(self.style().standardIcon(QStyle.SP_MediaVolume))
         self.mic_button.setFixedSize(280, 336)
         self.mic_button.clicked.connect(self.go_to_second_screen)
         
         self.list_button = QPushButton()
-        self.list_button.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_FileDialogListView))
+        self.list_button.setIcon(self.style().standardIcon(QStyle.SP_FileDialogListView))
         self.list_button.setFixedSize(280, 336)
         
         main_layout.addWidget(self.mic_button)
@@ -182,7 +185,7 @@ def main():
     
     window = MainWindow()
     window.show()
-    sys.exit(app.exec())
+    sys.exit(app.exec_())
 
 if __name__ == "__main__":
     main()
