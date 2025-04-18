@@ -1,4 +1,3 @@
-import torch
 import nemo.collections.asr as nemo_asr
 import pyaudio
 import wave
@@ -9,8 +8,9 @@ import warnings
 from pydub import AudioSegment
 import os
 import time
-import config
-import psutil
+from src.transcription import config
+from nemo.collections.asr.parts.utils.rnnt_utils import Hypothesis
+
 
 logging.getLogger("nemo_logger").setLevel(logging.ERROR)
 nemo.utils.logging.setLevel(logging.ERROR)
@@ -20,32 +20,49 @@ warnings.filterwarnings("ignore", category=UserWarning)
 class Transcriber:
     def __init__(
         self,
-        model_path=config.asr_model_path,
+        model_path=config.ASR_MODEL_PATH,
     ):
 
         self.model = nemo_asr.models.EncDecHybridRNNTCTCBPEModel.restore_from(
             model_path
         )
 
-    def transcribe_audio(self, file_path):
+    def transcribe_audio(self, file_path: str) -> str | None:
+        output: list[Hypothesis] = self.model.transcribe([file_path])
 
-        output = self.model.transcribe([file_path])
+        if not output or not isinstance(output[0], Hypothesis):
+            print(f">> Unexpected transcription output for {file_path}: {output}")
+            return None
 
-        if isinstance(output, tuple) and len(output) == 2:
-            processed_text = output[1]
-            return processed_text[0] if processed_text else None
-        if isinstance(output, list) and len(output) > 0 and isinstance(output[0], str):
-            return output[0]
-        return None
+        best_hypothesis: Hypothesis = output[0]
 
-    def record_and_transcribe(self, chunk_length_s=config.live_recording_chunk_length):
+        if best_hypothesis.text and best_hypothesis.text.strip():
+            print(f">> Accepted transcription: {best_hypothesis.text.strip()}")
+            return best_hypothesis.text.strip()
+        else:
+            print(
+                f">> Model returns a trnascription but has empty text: {best_hypothesis}"
+            )
+            return None
+
+    def record_and_transcribe(self, chunk_length_s=config.LIVE_RECORDING_CHUNK_LENGTH):
 
         p = pyaudio.PyAudio()
+
+        # stream = p.open(
+        # format=pyaudio.paInt16,
+        # rate=16000,
+        # channels=1,  # Channel 0 / Mono input
+        # input=True,
+        # input_device_index=1,  # ReSpeaker Mic Array (UAC1.0)
+        # frames_per_buffer=1024,
+        # )
         stream = p.open(
             format=pyaudio.paInt16,
-            channels=1,
             rate=16000,
+            channels=1,
             input=True,
+            input_device_index=1,
             frames_per_buffer=1024,
         )
 
@@ -70,7 +87,9 @@ class Transcriber:
 
             # Save result
             if transcription:
-                with open("results/transcription.txt", "a", encoding="utf-8") as f:
+                with open(
+                    "src/transcription/results/transcription.txt", "a", encoding="utf-8"
+                ) as f:
                     f.write(transcription + "\n")
 
             return transcription
@@ -92,7 +111,8 @@ class Transcriber:
 
         for i, start in enumerate(range(0, len(audio), chunk_length_ms)):
             chunk = audio[start : start + chunk_length_ms]
-            chunk_path = f"/tmp/chunk_{i}.wav"
+            chunk_path = os.path.join(tempfile.gettempdir(), f"chunk_{i}.wav")
+
             chunk.export(chunk_path, format="wav")
             chunk_paths.append(chunk_path)
 
@@ -116,7 +136,6 @@ def test_transcription_from_file(
     #     system_temp_c = float(raw_temp) / 1000.0
     # except Exception:
     #     system_temp_c = -1
-    start_cpu_load = psutil.cpu_percent(interval=None)
     chunk_paths = transcriber.chunk_audio(input_file, chunk_length_ms)
     total_chunks = len(chunk_paths)
     print(f"Number of chunks to process: {total_chunks}")
@@ -134,7 +153,6 @@ def test_transcription_from_file(
             else:
                 print(f"Chunk {i}/{total_chunks} had no transcription.")
 
-    # cleanup
     for chunk in chunk_paths:
         os.remove(chunk)
 
@@ -145,9 +163,8 @@ def test_transcription_from_file(
 
 
 if __name__ == "__main__":
-    transcriber = Transcriber(
-        model_path="src/transcription/transcription_model/stt_kk_ru_fastconformer_hybrid_large.nemo"
-    )
+    transcriber = Transcriber(model_path=config.ASR_MODEL_PATH)
+
     test_transcription_from_file(
         transcriber,
         input_file="src/transcription/input.wav",

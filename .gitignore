@@ -6,6 +6,10 @@ nemo_venv/
 transcription.txt
 summary.txt
 improved_transcription.txt
+llama.cpp/
+llama.cpp
+cases.db
+sherakala-8b-chat-Q6_K.gguf
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

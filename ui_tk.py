@@ -6,6 +6,7 @@ import sys
 from src.transcription.transcribe import Transcriber
 from src.llm.llm import LLM
 from src.enums import Language
+import config
 
 
 class RecorderThread(threading.Thread):
@@ -16,12 +17,13 @@ class RecorderThread(threading.Thread):
 
     def __init__(
         self,
-        transcriber,
-        llm,
+        transcriber: Transcriber,
+        llm: LLM,
         chunk_length_s=5,
         language=Language.RUSSIAN.value,
         on_transcription_done=None,
         on_improved_transcription_done=None,
+        on_summary_done=None,
     ):
         super().__init__()
         self.transcriber = transcriber
@@ -31,6 +33,7 @@ class RecorderThread(threading.Thread):
         self._stop_flag = False
         self.on_transcription_done = on_transcription_done
         self.on_improved_transcription_done = on_improved_transcription_done
+        self.on_summary_done = on_summary_done
 
     def run(self):
         while not self._stop_flag:
@@ -43,23 +46,29 @@ class RecorderThread(threading.Thread):
 
         # Once stopped, read the collected transcription from file
         transcription = ""
-        with open("results/transcription.txt", "r", encoding="utf-8") as f:
+        with open(config.TRANSCRIPTION_RESULT_PATH, "r", encoding="utf-8") as f:
             transcription = f.read()
 
         if self.on_transcription_done:
             self.on_transcription_done(transcription)
 
+        improved = self.llm.improve_transcription(transcription)
+
         # Improve transcription based on current language
-        if self.language == Language.RUSSIAN.value:
-            improved = self.llm.improve_russian_transcription(transcription)
-        else:
-            improved = self.llm.improve_kazakh_transcription(transcription)
+        # if self.language == Language.RUSSIAN.value:
+        #     improved = self.llm.improve_russian_transcription(transcription)
+        # else:
+        #     improved = self.llm.improve_kazakh_transcription(transcription)
 
         if self.on_improved_transcription_done:
             self.on_improved_transcription_done(improved)
 
+        summary = self.llm.summarize(improved)
+        if self.on_summary_done:
+            self.on_summary_done(summary)
+
         # Clear the file contents
-        with open("results/transcription.txt", "w", encoding="utf-8") as f:
+        with open(config.TRANSCRIPTION_RESULT_PATH, "w", encoding="utf-8") as f:
             f.write("")
 
     def stop(self):
@@ -79,12 +88,11 @@ class MainWindow(tk.Tk):
         self.transcriber = Transcriber()
         self.llm = LLM()
         self.recorder_thread = None
-        self.language = Language.RUSSIAN.value  # default
+        self.language = Language.RUSSIAN.value
 
-        # --- Create two "screens" (Frames) and raise one or the other ---
         self.main_screen = tk.Frame(self, bg="#2d2d30")
         self.second_screen = tk.Frame(self, bg="#2d2d30")
-        # Use grid to stack them in the same space
+
         for frame in (self.main_screen, self.second_screen):
             frame.grid(row=0, column=0, sticky="nsew")
 
@@ -201,6 +209,11 @@ class MainWindow(tk.Tk):
             side="left", expand=True, fill="both", padx=5
         )
 
+        self.summary_textbox = tk.Text(
+            textboxes_frame, bg="#1e1e1e", fg="#c0c0c0", width=35, height=15
+        )
+        self.summary_textbox.pack(side="left", expand=True, fill="both", padx=5)
+
     def show_frame(self, frame):
         frame.tkraise()
 
@@ -215,7 +228,6 @@ class MainWindow(tk.Tk):
         self.record_button.pack_forget()
         self.stop_button.pack(side="left", padx=5)
 
-        # Create & start the thread
         self.recorder_thread = RecorderThread(
             self.transcriber,
             self.llm,
@@ -223,34 +235,48 @@ class MainWindow(tk.Tk):
             language=self.language,
             on_transcription_done=self.handle_transcription,
             on_improved_transcription_done=self.handle_improved_transcription,
+            on_summary_done=self.handle_summary,
         )
         self.recorder_thread.start()
 
     def stop_recording(self):
         if self.recorder_thread is not None:
             self.recorder_thread.stop()
-            self.recorder_thread.join()
-            self.recorder_thread = None
+
+            def wait_for_thread():
+                self.recorder_thread.join()
+                self.recorder_thread = None
+
+            threading.Thread(target=wait_for_thread).start()
 
         self.stop_button.pack_forget()
         self.record_button.pack(side="left", padx=5)
 
     def handle_transcription(self, transcription):
-        # Update the transcription box in the Tk thread
         self.transcription_textbox.delete("1.0", tk.END)
-        self.transcription_textbox.insert(tk.END, transcription)
+        if isinstance(transcription, str):
+            self.transcription_textbox.insert(tk.END, transcription)
+        else:
+            self.transcription_textbox.insert(tk.END, "")
 
     def handle_improved_transcription(self, improved):
         self.improved_transcription_textbox.delete("1.0", tk.END)
         self.improved_transcription_textbox.insert(tk.END, improved)
 
+    def handle_summary(self, summary):
+        self.summary_textbox.delete("1.0", tk.END)
+        if isinstance(summary, str):
+            self.summary_textbox.insert(tk.END, summary)
+        else:
+            self.summary_textbox.insert(tk.END, "")
+
     def toggle_language(self):
         if self.language == Language.RUSSIAN.value:
             self.language = Language.KAZAKH.value
-            self.language_button.config(text="KAZ")
+            self.language_button.config(Language.KAZAKH.value)
         else:
             self.language = Language.RUSSIAN.value
-            self.language_button.config(text="RUS")
+            self.language_button.config(Language.RUSSIAN.value)
 
 
 def main():
@@ -259,4 +285,7 @@ def main():
 
 
 if __name__ == "__main__":
+
+    import os
+
     main()
