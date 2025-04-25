@@ -1,18 +1,32 @@
 import os
-from src.llm.exceptions.llm_exceptions import LLMError
 from llama_cpp import Llama
 from src.llm import config
+from transformers import AutoTokenizer, AutoModelForCausalLM
+from src.llm.exceptions.llm_exceptions import LLMError
+import requests
+import torch
+import os
 
 
 class LLM:
-    def __init__(self):
+
+    def __init__(
+        self,
+        model_path=r"C:\\Users\\user\\.lmstudio\\models\\sherakala-8b-chat-Q6_K\\sherakala-8b-chat-Q6_K\\sherakala-8b-chat-Q6_K.gguf",
+        n_ctx: int = config.MAX_CONTEXT,
+    ):
+        if not os.path.isfile(model_path):
+            raise FileNotFoundError(f"GGUF model not found: {model_path}")
         self.llm = Llama(
             model_path=config.PATH_TO_LOCAL_LLM,
-            n_ctx=config.MAX_CONTEXT_WINDOW,
-            n_threads=os.cpu_count(),
+            n_ctx=config.MAX_CONTEXT,
+            n_threads=os.cpu_count() // 2,
             use_mlock=False,
             use_mmap=True,
             chat_format="llama-3",
+        )
+        self.tokenizer = AutoTokenizer.from_pretrained(
+            "inceptionai/Llama-3.1-Sherkala-8B-Chat"
         )
 
     def local_llm(self, system_prompt, user_prompt, max_tokens=config.MAX_TOKENS):
@@ -30,39 +44,51 @@ class LLM:
 
     def improve_transcription(
         self,
-        text_or_path,
+        transcription,
         prompt_path="src/llm/prompts/improve_transcription_prompt_uni.txt",
     ):
-        try:
-            transcription = self._smart_text_detect(text_or_path)
+        transcription = self._smart_text_detect(transcription)
+        chunks = self._break_text_into_chunks(transcription)
 
-            with open(prompt_path, "r", encoding="utf-8") as prompt_file:
-                system_prompt = prompt_file.read().strip()
+        with open(prompt_path, "r", encoding="utf-8") as prompt_file:
+            system_prompt = prompt_file.read().strip()
 
-            user_prompt = transcription.strip()
+        improved_chunks = []
+        for chunk in chunks:
+            result = self.local_llm(system_prompt, chunk, max_tokens=2048)
+            improved_chunks.append(result["choices"][0]["message"]["content"].strip())
 
-            result = self.local_llm(system_prompt, user_prompt, max_tokens=2048)
-            return result["choices"][0]["message"]["content"].strip()
-        except Exception as e:
-            print(f"Error during improve_transcription: {e}")
-            return None
+        return " ".join(improved_chunks)
 
     def summarize(
-        self, text_or_path, prompt_path="src/llm/prompts/summarize_prompt_uni.txt"
+        self, transcription, prompt_path="src/llm/prompts/summarize_prompt_uni.txt"
     ):
-        try:
-            content = self._smart_text_detect(text_or_path)
+        transcription = self._smart_text_detect(transcription)
+        chunks = self._break_text_into_chunks(transcription)
 
-            with open(prompt_path, "r", encoding="utf-8") as prompt_file:
-                system_prompt = prompt_file.read().strip()
+        with open(prompt_path, "r", encoding="utf-8") as prompt_file:
+            system_prompt = prompt_file.read().strip()
 
-            user_prompt = content.strip()
+        summary_chunks = []
+        for chunk in chunks:
+            result = self.local_llm(system_prompt, chunk, max_tokens=1024)
+            summary_chunks.append(result["choices"][0]["message"]["content"].strip())
 
-            result = self.local_llm(system_prompt, user_prompt, max_tokens=1024)
-            return result["choices"][0]["message"]["content"].strip()
-        except Exception as e:
-            print(f"Error during summarize: {e}")
-            raise LLMError("Local LLM error during summarize")
+        return " ".join(summary_chunks)
+
+    def analyze(
+        self,
+        facts,
+        facts_from_other_transcriptions=[],
+        prompt_path="src/llm/prompts/analyze_prompt_uni.txt",
+    ):
+        facts = self._smart_text_detect(facts)
+
+        with open(prompt_path, "r", encoding="utf-8") as prompt_file:
+            system_prompt = prompt_file.read().strip()
+
+        result = self.local_llm(system_prompt, facts)
+        return result["choices"][0]["message"]["content"].strip()
 
     def _smart_text_detect(self, text_or_path):
         if os.path.isfile(text_or_path):
@@ -70,12 +96,31 @@ class LLM:
                 return file.read()
         return text_or_path
 
-    def analyze(self, text):
-        return text
+    def _break_text_into_chunks(self, text, chunk_size=None):
+        if chunk_size is None:
+            chunk_size = config.MAX_CONTEXT // 8
+
+        tokens = self.tokenizer.encode(text)
+        token_chunks = [
+            tokens[i : i + chunk_size] for i in range(0, len(tokens), chunk_size)
+        ]
+
+        chunks = [self.tokenizer.decode(chunk) for chunk in token_chunks]
+        return chunks
+
+
+if __name__ == "__main__":
+    try:
+        llm = LLM()
+        text = llm._smart_text_detect(
+            r"C:\Users\user\Desktop\work\device_prototyping\main\src\transcription\results\test_transcription.txt"
+        )
+        improved_text = llm.improve_transcription(text)
+        print("Improved Transcription:", improved_text)
+    except Exception as e:
+        print(f"An error occurred: {e}")
 
     ######ПРЕДЫДУЩАЯ ВЕРСИЯ КОДА С LMSTUDIO SERVER, C УНИКАЛЬНЫМИ МОДЕЛЯМИ ДЛЯ КАЖДОГО ЯЗЫКА
-
-
 #     def _get_kazakh_llm_response(
 #         self, text, url="http://localhost:1234/v1/chat/completions"
 #     ):

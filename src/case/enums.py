@@ -6,7 +6,7 @@ class Language(Enum):
     KAZAKH = "kaz"
 
 
-class CaseStatus(Enum):
+class TranscriptionStatus(Enum):
     RETRIEVE = "Retrieving"
     RECEIVED = "Received"
     TRANSCRIPTION = "Transcription"

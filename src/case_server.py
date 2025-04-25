@@ -5,26 +5,26 @@ import random
 import string
 
 
-class CaseStatus(str, Enum):
+class TranscriptionStatus(str, Enum):
     RETRIEVE = "RETRIEVE"
 
 
-app = FastAPI(title="Case Server")
+app = FastAPI(title="Transcription Server")
 
 
-@app.get("/getCase")
-def get_case():
+@app.get("/getTranscription")
+def get_transcription():
     chance = random.random()
     if chance < 0.05:  # 5% threshold
         random_string = "".join(
-            random.choices(string.ascii_uppercase + string.digits, k=5)
+            random.choices(string.ascii_uppertranscription + string.digits, k=5)
         )
         return {
             "case_number": f"CASE-{random_string}",
-            "title": "Sample Case",
-            "description": "Test case for transcription",
+            "title": "Sample Transcription",
+            "description": "Test transcription",
             "mp3_url": "https://example.com/sample.mp3",
-            "status": CaseStatus.RETRIEVE,
+            "status": TranscriptionStatus.RETRIEVE,
             "is_deleted": False,
             "create_date": datetime.utcnow(),
             "update_date": datetime.utcnow(),

@@ -1,10 +1,9 @@
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, scoped_session
 
-# Import the *same* Base used by your model
-from entity import Base, CaseEntity
+from src.case.entity import Base, TranscriptionEntity, CaseEntity
 
-DATABASE_URL = "sqlite:///cases.db"
+DATABASE_URL = "sqlite:///transcriptions.db"
 
 engine = create_engine(DATABASE_URL, echo=True, future=True)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
@@ -24,4 +23,8 @@ def init_db():
 
 
 if __name__ == "__main__":
+    import os
+
+    if os.path.exists("transcriptions.db"):
+        os.remove("transcriptions.db")
     init_db()

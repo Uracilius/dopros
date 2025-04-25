@@ -8,9 +8,10 @@ import warnings
 from pydub import AudioSegment
 import os
 import time
-from src.transcription import config
+import config
 from nemo.collections.asr.parts.utils.rnnt_utils import Hypothesis
-
+import threading
+from queue import Queue
 
 logging.getLogger("nemo_logger").setLevel(logging.ERROR)
 nemo.utils.logging.setLevel(logging.ERROR)
@@ -22,7 +23,7 @@ class Transcriber:
         self,
         model_path=config.ASR_MODEL_PATH,
     ):
-
+        self.stop_recording = threading.Event()
         self.model = nemo_asr.models.EncDecHybridRNNTCTCBPEModel.restore_from(
             model_path
         )
@@ -45,18 +46,10 @@ class Transcriber:
             )
             return None
 
-    def record_and_transcribe(self, chunk_length_s=config.LIVE_RECORDING_CHUNK_LENGTH):
-
+    def record_and_transcribe(
+        self, chunk_length_s=config.LIVE_RECORDING_CHUNK_LENGTH, overlap_s=1
+    ):
         p = pyaudio.PyAudio()
-
-        # stream = p.open(
-        # format=pyaudio.paInt16,
-        # rate=16000,
-        # channels=1,  # Channel 0 / Mono input
-        # input=True,
-        # input_device_index=1,  # ReSpeaker Mic Array (UAC1.0)
-        # frames_per_buffer=1024,
-        # )
         stream = p.open(
             format=pyaudio.paInt16,
             rate=16000,
@@ -66,41 +59,78 @@ class Transcriber:
             frames_per_buffer=1024,
         )
 
-        frames = []
-        try:
-            # Record audio in chunks
-            for _ in range(0, int(16000 / 1024 * chunk_length_s)):
+        audio_queue = Queue()
+        self.stop_recording.clear()
+        final_mp3_path = None
+        full_transcription = []
+
+        with open(config.TRANSCRIPTION_RESULT_PATH, "w", encoding="utf-8") as f:
+            f.write("")
+
+        def recorder():
+            frames = []
+            max_frames = int(16000 / 1024 * chunk_length_s)
+            overlap_frames = int(16000 / 1024 * overlap_s)
+
+            while not self.stop_recording.is_set():
                 data = stream.read(1024, exception_on_overflow=False)
                 frames.append(data)
 
-            # Save chunk to a .wav
-            with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tmp_wav:
-                wav_filename = tmp_wav.name
-                with wave.open(wav_filename, "wb") as wf:
-                    wf.setnchannels(1)
-                    wf.setsampwidth(p.get_sample_size(pyaudio.paInt16))
-                    wf.setframerate(16000)
-                    wf.writeframes(b"".join(frames))
+                if len(frames) >= max_frames:
+                    audio_queue.put(frames.copy())
+                    frames = frames[-overlap_frames:]
 
-            # Transcribe chunk
-            transcription = self.transcribe_audio(wav_filename)
-
-            # Save result
-            if transcription:
-                with open(
-                    "src/transcription/results/transcription.txt", "a", encoding="utf-8"
-                ) as f:
-                    f.write(transcription + "\n")
-
-            return transcription
-
-        except Exception as e:
-            print(f"Error during transcription: {e}")
-            return None
-        finally:
             stream.stop_stream()
             stream.close()
             p.terminate()
+
+        record_thread = threading.Thread(target=recorder)
+        record_thread.start()
+
+        try:
+            while not self.stop_recording.is_set() or not audio_queue.empty():
+                try:
+                    frames = audio_queue.get(timeout=0.5)
+                except:
+                    continue
+
+                with tempfile.NamedTemporaryFile(
+                    delete=False, suffix=".wav"
+                ) as tmp_wav:
+                    wav_filename = tmp_wav.name
+                    with wave.open(wav_filename, "wb") as wf:
+                        wf.setnchannels(1)
+                        wf.setsampwidth(p.get_sample_size(pyaudio.paInt16))
+                        wf.setframerate(16000)
+                        wf.writeframes(b"".join(frames))
+
+                transcription = self.transcribe_audio(wav_filename)
+
+                if transcription:
+                    full_transcription.append(transcription)
+
+                    # NEW: write to result file incrementally
+                    with open(
+                        config.TRANSCRIPTION_RESULT_PATH, "a", encoding="utf-8"
+                    ) as f:
+                        f.write(transcription + "\n")
+
+                os.unlink(wav_filename)
+
+        finally:
+            self.stop_recording.set()
+            record_thread.join()
+
+        # Save full audio as MP3
+        timestamp = time.strftime("%Y%m%d_%H%M%S")
+        final_mp3_path = os.path.abspath(f"audios/transcription_{timestamp}.mp3")
+        os.makedirs("audios", exist_ok=True)
+        audio_segment = AudioSegment(
+            data=b"".join(frames), sample_width=2, frame_rate=16000, channels=1
+        )
+        audio_segment.export(final_mp3_path, format="mp3")
+
+        return "\n".join(full_transcription), final_mp3_path
 
     def chunk_audio(self, input_path, chunk_length_ms=10000):
         """
@@ -120,10 +150,10 @@ class Transcriber:
 
 
 def test_transcription_from_file(
-    transcriber,
+    transcriber: Transcriber,
     input_file,
     output_file="results/transcription.txt",
-    chunk_length_ms=10000,
+    chunk_length_ms=20000,
 ):
     """
     for model testing
@@ -167,6 +197,6 @@ if __name__ == "__main__":
 
     test_transcription_from_file(
         transcriber,
-        input_file="src/transcription/input.wav",
+        input_file="src/transcription/dopros1.wav",
         output_file="src/transcription/results/transcription.txt",
     )

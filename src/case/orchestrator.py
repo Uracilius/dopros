@@ -1,80 +1,174 @@
 import threading
 import time
-from datetime import datetime
-from network_service import NetworkService
-from case_service import CaseService
-from repository import CaseRepository
-from models import CaseModel
-from db import get_db_session
-from enums import CaseStatus
-import config
+from typing import Dict
+
 import requests
+
+from src.case import config
+from src.case.db import get_db_session
+from src.case.network_service import NetworkService
+from src.case.transcription_service import TranscriptionService
+from src.case.repository import (
+    TranscriptionRepository,
+    CaseRepository,
+    InfoUnitRepository,
+)
 
 
 class Orchestrator:
+
     def __init__(self):
         db_session = next(get_db_session())
-        self.case_repository = CaseRepository(db_session)
-        self.case_service = CaseService(self.case_repository)
+        transcription_repo = TranscriptionRepository(db_session)
+
+        self.case_repo = CaseRepository(next(get_db_session()))
+
+        self.info_unit_repo = InfoUnitRepository(next(get_db_session()))
+
+        self.transcription_service = TranscriptionService(transcription_repo)
         self.network_service = NetworkService()
-        self.network_thread = threading.Thread(
-            target=self.network_service.monitor_network,
-            args=(self.case_service,),
-            daemon=True,
+
+        # self.network_thread = threading.Thread(
+        #     target=self.network_service.monitor_network,
+        #     args=(self.transcription_service,),
+        #     daemon=True,
+        # )
+        # self.network_thread.start()
+
+    def fetch_transcriptions_by_case_id(self, case_id: str):
+        transcriptions_list = self.transcription_service.get_transcriptions_by_case_id(
+            case_id
         )
-
-    def create_case(self, case_data):
-
-        if "create_date" in case_data:
-            case_data["create_date"] = datetime.fromisoformat(case_data["create_date"])
-        if "update_date" in case_data:
-            case_data["update_date"] = datetime.fromisoformat(case_data["update_date"])
-
-        case_model = CaseModel(**case_data)
-        case_entity = self.case_service.create_new_case(case_model)
-        print(f"Case {case_entity.id} created successfully.")
-        return case_entity
-
-    def partial_update(self, case_id: int, updated_fields: dict):
-        """Updates an existing case, applying only the fields you provide."""
-        updated_case = self.case_service.partial_update(case_id, updated_fields)
-        if updated_case:
-            print(f"Case {case_id} updated successfully.")
+        if transcriptions_list:
+            return transcriptions_list
         else:
-            print(f"Case {case_id} not found or update failed.")
-        return updated_case
+            print(f"No transcriptions found for case ID {case_id}.")
+            return []
 
-    def has_internet_check(self, url: str) -> bool:
-        """Return True if an HTTP GET request to `url` succeeds, otherwise False."""
+    def create_transcription(self, data: Dict):
+        entity = self.transcription_service.create_new_transcription(data)
+        print(f"Transcription {entity.id} created successfully.")
+        return entity
+
+    def partial_update_transcription(self, transcription_id: int, fields: Dict):
+        updated = self.transcription_service.partial_update(transcription_id, fields)
+        msg = "updated successfully." if updated else "not found or update failed."
+        print(f"Transcription {transcription_id} {msg}")
+        return updated
+
+    def get_case_list(self):
+        return self.case_repo.get_case_list()
+
+    def get_info_unit_list(self, case_id: str):
+        return self.info_unit_repo.get_info_units_by_case_id(case_id=case_id)
+
+    def create_info_unit(
+        self, case_id: str, transcription_id: int, text: str, language: str
+    ):
+        entity = self.info_unit_repo.create_info_unit(
+            case_id=case_id,
+            transcription_id=transcription_id,
+            text=text,
+            language=language,
+            status="0",
+        )
+        print(f"Info unit {entity.id} created successfully.")
+
+    @staticmethod
+    def _online(url: str) -> bool:
         try:
-            response = requests.get(url, timeout=3)
-            return response.status_code == 200
+            return requests.get(url, timeout=3).status_code == 200
         except requests.RequestException:
             return False
 
-    def fetch_case_list(self, api_url=config.SERVER_API_URL):
+    def _fetch_remote(self):
         try:
-            response = requests.get(api_url + "/getCase", timeout=5)
-            response.raise_for_status()
-            data = response.json()
-            print("Fetched case list:", data)
-
+            resp = requests.get(f"{config.SERVER_API_URL}/getTranscription", timeout=5)
+            resp.raise_for_status()
+            data = resp.json()
             if data:
-                self.create_case(data)
-        except requests.RequestException as e:
-            print(f"Error fetching case list: {e}")
+                # API returns either a list or a single object; normalise to list
+                payloads = data if isinstance(data, list) else [data]
+                for p in payloads:
+                    self.create_transcription(p)
+        except requests.RequestException as exc:
+            print(f"Error fetching transcription list: {exc}")
 
-    def main(self):
-        last_fetch_time = 0
-        while True:
-            if self.has_internet_check(config.NETWORK_CHECK_URL):
-                if (time.time() - last_fetch_time) >= config.FETCH_INTERVAL:
-                    self.fetch_case_list()
-                    last_fetch_time = time.time()
-            time.sleep(config.CHECK_INTERVAL)
+    # --------------------------------------------------------------------- #
+    # Main loop
+    # --------------------------------------------------------------------- #
+    # def run(self):
+    #     last_fetch = 0.0
+    #     while True:
+    #         if self._online(config.NETWORK_CHECK_URL):
+    #             if time.time() - last_fetch >= config.FETCH_INTERVAL:
+    #                 self._fetch_remote()
+    #                 last_fetch = time.time()
+    #         time.sleep(config.CHECK_INTERVAL)
 
 
 if __name__ == "__main__":
+    from datetime import datetime
+    from enums import TranscriptionStatus
+    from entity import CaseEntity
+
     orchestrator = Orchestrator()
 
-    orchestrator.main()
+    # --- Create sample cases ---
+    print("Creating sample cases...")
+    session = next(get_db_session())
+    case_repo = CaseRepository(session)
+
+    case_data = [
+        {"id": "CASE001", "status": "OPEN"},
+        {"id": "CASE002", "status": "CLOSED"},
+    ]
+
+    for c in case_data:
+        case = (
+            orchestrator.case_repo.db_session.query(CaseEntity)
+            .filter_by(id=c["id"])
+            .first()
+        )
+        if not case:
+            new_case = CaseEntity(
+                id=c["id"], status=c["status"], create_date=datetime.utcnow()
+            )
+            orchestrator.case_repo.db_session.add(new_case)
+
+    orchestrator.case_repo.db_session.commit()
+    print("Cases created.\n")
+
+    # --- Create sample transcriptions ---
+    print("Creating sample transcriptions...")
+    transcriptions = [
+        {
+            "title": "First Hearing",
+            "case_id": "CASE001",
+            "description": "Opening hearing session",
+            "mp3_url": "http://example.com/audio1.mp3",
+            "create_date": datetime.utcnow(),
+            "update_date": datetime.utcnow(),
+        },
+        {
+            "title": "Second Hearing",
+            "case_id": "CASE002",
+            "description": "Final argument session",
+            "mp3_url": "http://example.com/audio2.mp3",
+            "create_date": datetime.utcnow(),
+            "update_date": datetime.utcnow(),
+        },
+    ]
+
+    for t in transcriptions:
+        orchestrator.create_transcription(t.copy())
+
+    print("\nFetching all cases and transcriptions:\n")
+    all_cases = orchestrator.get_case_list()
+    for c in all_cases:
+        print(c)
+
+    for c in case_data:
+        trans_list = orchestrator.fetch_transcriptions_by_case_id(c["id"])
+        for t in trans_list:
+            print(t)
