@@ -12,7 +12,7 @@ class LLM:
 
     def __init__(
         self,
-        model_path=r"C:\\Users\\user\\.lmstudio\\models\\sherakala-8b-chat-Q6_K\\sherakala-8b-chat-Q6_K\\sherakala-8b-chat-Q6_K.gguf",
+        model_path=config.PATH_TO_LOCAL_LLM,
         n_ctx: int = config.MAX_CONTEXT,
     ):
         if not os.path.isfile(model_path):

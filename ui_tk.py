@@ -414,6 +414,8 @@ class MainWindow(tk.Tk):
                 f"ID: {rec.id}\n"
                 f"Title: {rec.title}\n"
                 f"Description: {rec.description}\n"
+                f"Full Text: {rec.full_text}\n"
+                f"Improved Text: {rec.improved_text}\n"
                 f"MP3 URL: {rec.mp3_url}\n"
                 f"Status: {rec.status}\n"
                 f"Created: {rec.create_date}\n"
