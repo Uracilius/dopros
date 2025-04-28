@@ -8,7 +8,7 @@ import warnings
 from pydub import AudioSegment
 import os
 import time
-import config
+from src.transcription import config
 from nemo.collections.asr.parts.utils.rnnt_utils import Hypothesis
 import threading
 from queue import Queue
@@ -55,7 +55,7 @@ class Transcriber:
             rate=16000,
             channels=1,
             input=True,
-            input_device_index=1,
+            input_device_index=2,
             frames_per_buffer=1024,
         )
 
