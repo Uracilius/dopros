@@ -1,10 +1,7 @@
 import os
 from llama_cpp import Llama
 from src.llm import config
-from transformers import AutoTokenizer, AutoModelForCausalLM
-from src.llm.exceptions.llm_exceptions import LLMError
-import requests
-import torch
+from transformers import AutoTokenizer
 import os
 
 
@@ -12,7 +9,9 @@ class LLM:
 
     def __init__(
         self,
-        model_path=str(config.PATH_TO_LOCAL_LLM), #str conversion because An error occurred: 'WindowsPath' object has no attribute 'encode'
+        model_path=str(
+            config.PATH_TO_LOCAL_LLM
+        ),  # str conversion because An error occurred: 'WindowsPath' object has no attribute 'encode'
         n_ctx: int = config.MAX_CONTEXT,
     ):
         if not os.path.isfile(model_path):
@@ -20,14 +19,13 @@ class LLM:
         self.llm = Llama(
             model_path=model_path,
             n_ctx=n_ctx,
-            n_threads=os.cpu_count() // 2,
+            n_threads=config.NUM_THREADS,
             use_mlock=False,
             use_mmap=True,
             chat_format="llama-3",
+            verbose=False,
         )
-        self.tokenizer = AutoTokenizer.from_pretrained(
-            "inceptionai/Llama-3.1-Sherkala-8B-Chat"
-        )
+        self.tokenizer = AutoTokenizer.from_pretrained(config.HF_MODEL_NAME)
 
     def local_llm(self, system_prompt, user_prompt, max_tokens=config.MAX_TOKENS):
         return self.llm.create_chat_completion(
@@ -36,11 +34,11 @@ class LLM:
                 {"role": "user", "content": user_prompt},
             ],
             max_tokens=max_tokens,
-            temperature=0.4,
-            top_k=40,
-            top_p=0.95,
-            repeat_penalty=1.1,
-        )
+            temperature=config.TEMPERATURE,
+            top_k=config.TOP_K,
+            top_p=config.TOP_P,
+            repeat_penalty=config.REPEAT_PENALTY,
+        )["choices"][0]["message"]["content"].strip()
 
     def improve_transcription(
         self,
@@ -56,7 +54,7 @@ class LLM:
         improved_chunks = []
         for chunk in chunks:
             result = self.local_llm(system_prompt, chunk, max_tokens=2048)
-            improved_chunks.append(result["choices"][0]["message"]["content"].strip())
+            improved_chunks.append(result)
 
         return " ".join(improved_chunks)
 
@@ -72,14 +70,14 @@ class LLM:
         summary_chunks = []
         for chunk in chunks:
             result = self.local_llm(system_prompt, chunk, max_tokens=1024)
-            summary_chunks.append(result["choices"][0]["message"]["content"].strip())
+            summary_chunks.append(result)
 
         return " ".join(summary_chunks)
 
     def analyze(
         self,
         facts,
-        facts_from_other_transcriptions=[],
+        all_facts=[],
         prompt_path="src/llm/prompts/analyze_prompt_uni.txt",
     ):
         facts = self._smart_text_detect(facts)
@@ -88,7 +86,7 @@ class LLM:
             system_prompt = prompt_file.read().strip()
 
         result = self.local_llm(system_prompt, facts)
-        return result["choices"][0]["message"]["content"].strip()
+        return result
 
     def _smart_text_detect(self, text_or_path):
         if os.path.isfile(text_or_path):

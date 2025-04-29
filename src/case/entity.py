@@ -40,6 +40,7 @@ class CaseEntity(Base):
     def __repr__(self):
         return f"<CaseEntity(id='{self.id}', status='{self.status}')>"
 
+
 class InfoUnitEntity(Base):
     __tablename__ = "info_units"
 

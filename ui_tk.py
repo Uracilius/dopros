@@ -68,12 +68,12 @@ class RecorderThread(threading.Thread):
         if self.on_improved_transcription_done:
             self.on_improved_transcription_done(improved)
 
-        analysis = self.llm.summarize(improved)
+        info_units_unprocessed = self.llm.summarize(improved)
 
-        analysis_points = analysis.split("\n")
+        info_units = info_units_unprocessed.split("\n")
 
         if self.on_analysis_done:
-            self.on_analysis_done(analysis)
+            self.on_analysis_done(info_units_unprocessed)
 
         created_transcription = None
         # Save transcription to database
@@ -84,13 +84,14 @@ class RecorderThread(threading.Thread):
                     "case_id": self.case_id,
                     "full_text": transcription,
                     "improved_text": improved,
+                    "facts": info_units_unprocessed,
                     "description": "",
                     "mp3_url": mp3_path,
                 }
             )
-        
-        if len(analysis_points) > 0 and created_transcription:
-            for text in analysis_points:
+
+        if len(info_units) > 0 and created_transcription:
+            for text in info_units:
                 self.orchestrator.create_info_unit(
                     case_id=self.case_id,
                     transcription_id=created_transcription.id,
@@ -116,10 +117,20 @@ class MainWindow(tk.Tk):
         # If you want a dark background overall:
         self.configure(bg="#2d2d30")
 
-        # Keep track of transcriber & LLM
+        self.start_time = time.time()
+        print("Initializing transcriber...")
         self.transcriber = Transcriber()
+        print("Transcriber initialized, time taken is ", time.time() - self.start_time)
+
+        self.start_time = time.time()
+        print("Initializing LLM...")
         self.llm = LLM()
+        print("LLm initialized, time taken is ", time.time() - self.start_time)
+
+        self.start_time = time.time()
+        print("Initializing Orchestrator...")
         self.orchestrator = Orchestrator()
+        print("Orchestrator initialized, time taken is ", time.time() - self.start_time)
 
         self.recorder_thread = None
         self.language = Language.RUSSIAN.value
@@ -148,12 +159,12 @@ class MainWindow(tk.Tk):
             text="Select Case",
             fg="#ffffff",
             bg="#2d2d30",
-            font=("Arial", 16),
+            font=("Arial", 10),
         )
         label.pack(pady=10)
 
         self.case_listbox = tk.Listbox(
-            self.case_selection_screen, bg="#1e1e1e", fg="#c0c0c0", font=("Arial", 12)
+            self.case_selection_screen, bg="#1e1e1e", fg="#c0c0c0", font=("Arial", 8)
         )
         self.case_listbox.pack(fill="both", expand=True, padx=20, pady=10)
 
@@ -204,8 +215,8 @@ class MainWindow(tk.Tk):
             bg="#3e3e42",
             fg="#ffffff",
             activebackground="#505050",
-            width=20,
-            height=10,  # approximate “big” button
+            width=10,
+            height=5,  # approximate “big” button
         )
         self.mic_button.pack(side="left", expand=True, fill="both")
 
@@ -217,8 +228,8 @@ class MainWindow(tk.Tk):
             bg="#3e3e42",
             fg="#ffffff",
             activebackground="#505050",
-            width=20,
-            height=10,
+            width=10,
+            height=5,
         )
         self.list_button.pack(side="left", expand=True, fill="both")
 
@@ -238,8 +249,8 @@ class MainWindow(tk.Tk):
             bg="#3e3e42",
             fg="#ffffff",
             activebackground="#505050",
-            width=8,
-            height=2,
+            width=4,
+            height=1,
         )
         self.record_button.pack(side="left", padx=5)
 
@@ -250,8 +261,8 @@ class MainWindow(tk.Tk):
             bg="#3e3e42",
             fg="#ffffff",
             activebackground="#505050",
-            width=8,
-            height=2,
+            width=4,
+            height=1,
         )
         self.stop_button.pack(side="left", padx=5)
         self.stop_button.pack_forget()  # hidden by default
@@ -263,8 +274,8 @@ class MainWindow(tk.Tk):
             bg="#3e3e42",
             fg="#ffffff",
             activebackground="#505050",
-            width=5,
-            height=2,
+            width=2,
+            height=1,
         )
         self.back_button.pack(side="left", padx=5)
 
@@ -275,8 +286,8 @@ class MainWindow(tk.Tk):
             bg="#3e3e42",
             fg="#ffffff",
             activebackground="#505050",
-            width=5,
-            height=2,
+            width=2,
+            height=1,
         )
         self.language_button.pack(side="left", padx=5)
 
@@ -285,19 +296,19 @@ class MainWindow(tk.Tk):
         textboxes_frame.pack(expand=True, fill="both")
 
         self.transcription_textbox = tk.Text(
-            textboxes_frame, bg="#1e1e1e", fg="#c0c0c0", width=35, height=15
+            textboxes_frame, bg="#1e1e1e", fg="#c0c0c0", width=17, height=7
         )
         self.transcription_textbox.pack(side="left", expand=True, fill="both", padx=5)
 
         self.improved_transcription_textbox = tk.Text(
-            textboxes_frame, bg="#1e1e1e", fg="#c0c0c0", width=35, height=15
+            textboxes_frame, bg="#1e1e1e", fg="#c0c0c0", width=17, height=7
         )
         self.improved_transcription_textbox.pack(
             side="left", expand=True, fill="both", padx=5
         )
 
         self.analysis_textbox = tk.Text(
-            textboxes_frame, bg="#1e1e1e", fg="#c0c0c0", width=35, height=15
+            textboxes_frame, bg="#1e1e1e", fg="#c0c0c0", width=17, height=7
         )
         self.analysis_textbox.pack(side="left", expand=True, fill="both", padx=5)
 
