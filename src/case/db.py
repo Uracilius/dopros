@@ -1,7 +1,7 @@
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, scoped_session
 
-from src.case.entity import Base, TranscriptionEntity, CaseEntity
+from src.case.entity import Base, TranscriptionEntity, CaseEntity, InfoUnitEntity
 
 DATABASE_URL = "sqlite:///transcriptions.db"
 
