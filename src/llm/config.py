@@ -1,5 +1,16 @@
 MAX_TOKENS = 2048
 MAX_CONTEXT = 4096
-HF_MODEL_NAME = "inceptionai/Llama-3.1-Sherkala-8B-Chat"
-# PATH_TO_LOCAL_LLM = r"C:\Users\user\.lmstudio\models\sherakala-8b-chat-Q6_K\sherakala-8b-chat-Q6_K\sherakala-8b-chat-Q6_K.gguf"
-PATH_TO_LOCAL_LLM = r"C:\Users\user\Desktop\work\device_prototyping\main\src\llm\model\llama_model_q5km.gguf"
+
+
+###LOAD ENV FROM .ENV FILE
+import os
+from pathlib import Path
+from dotenv import load_dotenv, find_dotenv
+
+load_dotenv(find_dotenv())
+
+HF_MODEL_NAME     = os.getenv("DOPROS_HF_MODEL_NAME")
+PATH_TO_LOCAL_LLM = Path(os.getenv("DOPROS_PATH_TO_LOCAL_LLM", ""))
+
+if not PATH_TO_LOCAL_LLM.exists():
+    raise FileNotFoundError(f"Model file not found: {PATH_TO_LOCAL_LLM}")

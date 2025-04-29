@@ -12,14 +12,14 @@ class LLM:
 
     def __init__(
         self,
-        model_path=config.PATH_TO_LOCAL_LLM,
+        model_path=str(config.PATH_TO_LOCAL_LLM), #str conversion because An error occurred: 'WindowsPath' object has no attribute 'encode'
         n_ctx: int = config.MAX_CONTEXT,
     ):
         if not os.path.isfile(model_path):
             raise FileNotFoundError(f"GGUF model not found: {model_path}")
         self.llm = Llama(
-            model_path=config.PATH_TO_LOCAL_LLM,
-            n_ctx=config.MAX_CONTEXT,
+            model_path=model_path,
+            n_ctx=n_ctx,
             n_threads=os.cpu_count() // 2,
             use_mlock=False,
             use_mmap=True,
