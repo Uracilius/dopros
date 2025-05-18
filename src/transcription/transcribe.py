@@ -1,202 +1,183 @@
-import nemo.collections.asr as nemo_asr
-import pyaudio
-import wave
-import tempfile
-import logging
-import nemo.utils
-import warnings
-from pydub import AudioSegment
-import os
-import time
-from src.transcription import config
-from nemo.collections.asr.parts.utils.rnnt_utils import Hypothesis
-import threading
-from queue import Queue
+# src/transcription/transcribe.py
+"""
+Real-time transcription with DOA-based dynamic diarisation.
 
+Key points
+----------
+* One PyAudio stream; we read 1024-sample frames (≈ 64 ms at 16 kHz, 1 ch, 16 bit).
+* Direction of Arrival (DOA) polled every frame.
+* As soon as DOA *стабильно* смещается на другой «bucket» 3 раза подряд
+  (≈ 0.2 с) – режем аудио, отправляем в ASR и помечаем «Speaker X».
+* Чанки также сбрасываются, если накоплено ≥ MAX_SEC_PER_CHUNK секунд,
+  чтобы длинный монолог не уходил в 30-секундный кусок.
+* Минимальный размер чанка – 0.4 с: если сплит случился раньше, ждём
+  добора данных.
+"""
+
+import os, time, wave, tempfile, threading, logging, warnings, statistics
+from queue import Queue
+from collections import deque
+from concurrent.futures import ThreadPoolExecutor
+from typing import List, Tuple
+
+import pyaudio
+from pydub import AudioSegment
+import nemo.collections.asr as nemo_asr
+from nemo.collections.asr.parts.utils.rnnt_utils import Hypothesis
+import nemo.utils
+
+from src.transcription import config
+from src.transcription.doa import VoiceDirectionFinder
+
+# Silence NeMo logging
 logging.getLogger("nemo_logger").setLevel(logging.ERROR)
 nemo.utils.logging.setLevel(logging.ERROR)
 warnings.filterwarnings("ignore", category=UserWarning)
 
 
+# --------------------------------------------------------------------------- #
+#                              Transcriber                                    #
+# --------------------------------------------------------------------------- #
 class Transcriber:
-    def __init__(
-        self,
-        model_path=config.ASR_MODEL_PATH,
-    ):
+    """Record microphone, split on speaker turn, run NeMo RNNT model."""
+
+    # tune here
+    _FRAME_LEN = 1024  # 64 ms @ 16 kHz
+    _SAMPLE_RATE = 16_000
+    _MIN_CHUNK_MS = 400  # don’t flush shorter chunks
+    _MAX_SEC_PER_CHUNK = 8  # force-flush long monologues
+    _STABLE_READS = 4  # DOA readings before we accept new bucket
+
+    def __init__(self, model_path: str = config.ASR_MODEL_PATH):
+        self.vdf = VoiceDirectionFinder(bucket_size=20)
         self.stop_recording = threading.Event()
         self.model = nemo_asr.models.EncDecHybridRNNTCTCBPEModel.restore_from(
             model_path
         )
+        self.executor = ThreadPoolExecutor(max_workers=2)
 
-    def transcribe_audio(self, file_path: str) -> str | None:
-        output: list[Hypothesis] = self.model.transcribe([file_path])
-
+    # --------------------------------------------------------------------- #
+    #                             ASR helper                                #
+    # --------------------------------------------------------------------- #
+    def transcribe_audio(self, wav_path: str) -> str | None:
+        output: List[Hypothesis] = self.model.transcribe([wav_path])
         if not output or not isinstance(output[0], Hypothesis):
-            print(f">> Unexpected transcription output for {file_path}: {output}")
             return None
+        text = output[0].text.strip()
+        return text or None
 
-        best_hypothesis: Hypothesis = output[0]
+    # --------------------------------------------------------------------- #
+    #                          Main public API                              #
+    # --------------------------------------------------------------------- #
+    def record_and_transcribe(self) -> Tuple[str, str]:
+        """Return (full_transcription_text, mp3_path)."""
 
-        if best_hypothesis.text and best_hypothesis.text.strip():
-            print(f">> Accepted transcription: {best_hypothesis.text.strip()}")
-            return best_hypothesis.text.strip()
-        else:
-            print(
-                f">> Model returns a trnascription but has empty text: {best_hypothesis}"
-            )
-            return None
-
-    def record_and_transcribe(
-        self, chunk_length_s=config.LIVE_RECORDING_CHUNK_LENGTH, overlap_s=1
-    ):
-        p = pyaudio.PyAudio()
-        stream = p.open(
+        pa = pyaudio.PyAudio()
+        stream = pa.open(
             format=pyaudio.paInt16,
-            rate=16000,
+            rate=self._SAMPLE_RATE,
             channels=1,
             input=True,
-            input_device_index=2,
-            frames_per_buffer=1024,
+            input_device_index=1,
+            frames_per_buffer=self._FRAME_LEN,
         )
 
-        audio_queue = Queue()
-        self.stop_recording.clear()
-        final_mp3_path = None
-        full_transcription = []
+        # state
+        frames_current: List[bytes] = []
+        speaker_bucket = self.vdf.get_bucket(self.vdf.get_direction())
+        stable_reads = 0
+        start_time = time.time()
+        chunk_start_time = start_time
+        all_speakers_text: List[str] = []
 
+        # prepare log file
         with open(config.TRANSCRIPTION_RESULT_PATH, "w", encoding="utf-8") as f:
             f.write("")
 
-        def recorder():
-            frames = []
-            max_frames = int(16000 / 1024 * chunk_length_s)
-            overlap_frames = int(16000 / 1024 * overlap_s)
+        def flush_chunk(frames: List[bytes], bucket: int):
+            """Send chunk to ASR, write to file, return transcript or None."""
+            if not frames:
+                return None
 
-            while not self.stop_recording.is_set():
-                data = stream.read(1024, exception_on_overflow=False)
-                frames.append(data)
+            duration_ms = len(frames) * self._FRAME_LEN / self._SAMPLE_RATE * 1000
+            if duration_ms < self._MIN_CHUNK_MS:
+                # too small – merge with next chunk
+                return None
 
-                if len(frames) >= max_frames:
-                    audio_queue.put(frames.copy())
-                    frames = frames[-overlap_frames:]
+            # save wav
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tmp:
+                wav_path = tmp.name
+                with wave.open(wav_path, "wb") as wf:
+                    wf.setnchannels(1)
+                    wf.setsampwidth(pa.get_sample_size(pyaudio.paInt16))
+                    wf.setframerate(self._SAMPLE_RATE)
+                    wf.writeframes(b"".join(frames))
 
-            stream.stop_stream()
-            stream.close()
-            p.terminate()
+            text = self.transcribe_audio(wav_path)
+            os.unlink(wav_path)
+            if not text:
+                return None
 
-        record_thread = threading.Thread(target=recorder)
-        record_thread.start()
+            speaker = self.vdf.classify_speaker(bucket)
+            timestamp = time.strftime(
+                "[%H:%M:%S]", time.gmtime(time.time() - start_time)
+            )
+            with open(config.TRANSCRIPTION_RESULT_PATH, "a", encoding="utf-8") as f:
+                f.write(f"{timestamp} {speaker}: {text}\n")
 
+            all_speakers_text.append(text)
+            return text
+
+        # ----------------------------------------------------------------- #
+        #                          Streaming loop                           #
+        # ----------------------------------------------------------------- #
+        self.stop_recording.clear()
         try:
-            while not self.stop_recording.is_set() or not audio_queue.empty():
-                try:
-                    frames = audio_queue.get(timeout=0.5)
-                except:
+            while not self.stop_recording.is_set():
+                data = stream.read(self._FRAME_LEN, exception_on_overflow=False)
+                frames_current.append(data)
+
+                # --- DOA logic
+                doa_bucket = self.vdf.get_bucket(self.vdf.get_direction())
+                if doa_bucket == speaker_bucket:
+                    stable_reads = min(stable_reads + 1, self._STABLE_READS)
+                else:
+                    stable_reads = 1  # first reading of potential new speaker
+
+                # accept new speaker when stable
+                if doa_bucket != speaker_bucket and stable_reads >= self._STABLE_READS:
+
+                    flush_chunk(frames_current, speaker_bucket)
+                    frames_current = []
+                    speaker_bucket = doa_bucket
+                    chunk_start_time = time.time()
                     continue
 
-                with tempfile.NamedTemporaryFile(
-                    delete=False, suffix=".wav"
-                ) as tmp_wav:
-                    wav_filename = tmp_wav.name
-                    with wave.open(wav_filename, "wb") as wf:
-                        wf.setnchannels(1)
-                        wf.setsampwidth(p.get_sample_size(pyaudio.paInt16))
-                        wf.setframerate(16000)
-                        wf.writeframes(b"".join(frames))
-
-                transcription = self.transcribe_audio(wav_filename)
-
-                if transcription:
-                    full_transcription.append(transcription)
-
-                    # NEW: write to result file incrementally
-                    with open(
-                        config.TRANSCRIPTION_RESULT_PATH, "a", encoding="utf-8"
-                    ) as f:
-                        f.write(transcription + "\n")
-
-                os.unlink(wav_filename)
+                if time.time() - chunk_start_time >= self._MAX_SEC_PER_CHUNK:
+                    flush_chunk(frames_current, speaker_bucket)
+                    frames_current = []
+                    chunk_start_time = time.time()
 
         finally:
-            self.stop_recording.set()
-            record_thread.join()
+            # final flush
 
-        # Save full audio as MP3
+            flush_chunk(frames_current, speaker_bucket)
+            stream.stop_stream()
+            stream.close()
+            pa.terminate()
+            self.executor.shutdown(wait=False)
+            self.stop_recording.set()
+
+        # save full recording to mp3 (optional — iframe buffer reused)
         timestamp = time.strftime("%Y%m%d_%H%M%S")
-        final_mp3_path = os.path.abspath(f"audios/transcription_{timestamp}.mp3")
+        mp3_path = os.path.abspath(f"audios/transcription_{timestamp}.mp3")
         os.makedirs("audios", exist_ok=True)
         audio_segment = AudioSegment(
-            data=b"".join(frames), sample_width=2, frame_rate=16000, channels=1
+            data=b"".join(frames_current),
+            sample_width=2,
+            frame_rate=self._SAMPLE_RATE,
+            channels=1,
         )
-        audio_segment.export(final_mp3_path, format="mp3")
+        audio_segment.export(mp3_path, format="mp3")
 
-        return "\n".join(full_transcription), final_mp3_path
-
-    def chunk_audio(self, input_path, chunk_length_ms=10000):
-        """
-        Splits an audio file into chunks of chunk_length_ms (milliseconds) and saves them to /tmp.
-        """
-        audio = AudioSegment.from_wav(input_path)
-        chunk_paths = []
-
-        for i, start in enumerate(range(0, len(audio), chunk_length_ms)):
-            chunk = audio[start : start + chunk_length_ms]
-            chunk_path = os.path.join(tempfile.gettempdir(), f"chunk_{i}.wav")
-
-            chunk.export(chunk_path, format="wav")
-            chunk_paths.append(chunk_path)
-
-        return chunk_paths
-
-
-def test_transcription_from_file(
-    transcriber: Transcriber,
-    input_file,
-    output_file="results/transcription.txt",
-    chunk_length_ms=20000,
-):
-    """
-    for model testing
-    """
-    start_time = time.time()
-
-    # try:
-    #     with open("/sys/class/thermal/thermal_zone0/temp", "r") as temp_file:
-    #         raw_temp = temp_file.read().strip()
-    #     system_temp_c = float(raw_temp) / 1000.0
-    # except Exception:
-    #     system_temp_c = -1
-    chunk_paths = transcriber.chunk_audio(input_file, chunk_length_ms)
-    total_chunks = len(chunk_paths)
-    print(f"Number of chunks to process: {total_chunks}")
-
-    total_audio_ms = len(AudioSegment.from_wav(input_file))
-    total_audio_sec = round(total_audio_ms / 1000, 2)
-    print(f"Total audio length: {total_audio_sec} seconds")
-
-    with open(output_file, "w", encoding="utf-8") as f:
-        for i, chunk_path in enumerate(chunk_paths, 1):
-            transcription = transcriber.transcribe_audio(chunk_path)
-            if transcription:
-                f.write(transcription + "\n")
-                print(f"Chunk {i}/{total_chunks} transcription: {transcription}")
-            else:
-                print(f"Chunk {i}/{total_chunks} had no transcription.")
-
-    for chunk in chunk_paths:
-        os.remove(chunk)
-
-    total_time = round(time.time() - start_time, 2)
-
-    print(f"Transcription took {total_time} seconds.")
-    print(f"Transcription saved to {output_file}")
-
-
-if __name__ == "__main__":
-    transcriber = Transcriber(model_path=config.ASR_MODEL_PATH)
-
-    test_transcription_from_file(
-        transcriber,
-        input_file="src/transcription/dopros1.wav",
-        output_file="src/transcription/results/transcription.txt",
-    )
+        return "\n".join(all_speakers_text), mp3_path

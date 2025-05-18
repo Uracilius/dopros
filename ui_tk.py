@@ -1,7 +1,6 @@
 import tkinter as tk
 import threading
 import time
-import sys
 from tkinter import messagebox
 
 from src.transcription.transcribe import Transcriber
@@ -42,7 +41,7 @@ class RecorderThread(threading.Thread):
     def run(self):
         while not self._stop_flag:
             text, mp3_path = self.transcriber.record_and_transcribe(
-                chunk_length_s=self.chunk_length_s
+                # chunk_length_s=self.chunk_length_s
             )
 
             if self.on_transcription_done:
@@ -84,7 +83,6 @@ class RecorderThread(threading.Thread):
                     "case_id": self.case_id,
                     "full_text": transcription,
                     "improved_text": improved,
-                    "facts": info_units_unprocessed,
                     "description": "",
                     "mp3_url": mp3_path,
                 }
@@ -111,10 +109,9 @@ class RecorderThread(threading.Thread):
 class MainWindow(tk.Tk):
     def __init__(self):
         super().__init__()
+
         self.title("6.5-inch Screen Simulation")
         self.geometry("560x336")
-
-        # If you want a dark background overall:
         self.configure(bg="#2d2d30")
 
         self.start_time = time.time()
@@ -125,7 +122,7 @@ class MainWindow(tk.Tk):
         self.start_time = time.time()
         print("Initializing LLM...")
         self.llm = LLM()
-        print("LLm initialized, time taken is ", time.time() - self.start_time)
+        print("LLM initialized, time taken is ", time.time() - self.start_time)
 
         self.start_time = time.time()
         print("Initializing Orchestrator...")
@@ -137,7 +134,6 @@ class MainWindow(tk.Tk):
 
         self.main_screen = tk.Frame(self, bg="#2d2d30")
         self.second_screen = tk.Frame(self, bg="#2d2d30")
-
         self.case_selection_screen = tk.Frame(self, bg="#2d2d30")
         self.case_id_selected = None
 
@@ -146,9 +142,6 @@ class MainWindow(tk.Tk):
 
         self.build_case_selection_screen()
         self.show_frame(self.case_selection_screen)
-
-        for frame in (self.main_screen, self.second_screen):
-            frame.grid(row=0, column=0, sticky="nsew")
 
         self.build_main_screen()
         self.build_second_screen()
@@ -184,8 +177,7 @@ class MainWindow(tk.Tk):
     def populate_case_list(self):
         self.case_listbox.delete(0, tk.END)
         cases = self.orchestrator.get_case_list()
-        print(cases)
-        self.case_map = {}  # idx -> case_id
+        self.case_map = {}
         for idx, case in enumerate(cases):
             label = f"{case.id} ({case.status})"
             self.case_listbox.insert(tk.END, label)
@@ -200,14 +192,9 @@ class MainWindow(tk.Tk):
         self.show_frame(self.main_screen)
 
     def build_main_screen(self):
-        """
-        Main screen with two large side-by-side buttons: mic and list.
-        """
-        # A horizontal container
         container = tk.Frame(self.main_screen, bg="#2d2d30")
         container.pack(expand=True, fill="both")
 
-        # "Microphone" button (navigates to second screen)
         self.mic_button = tk.Button(
             container,
             text="Mic",
@@ -216,15 +203,14 @@ class MainWindow(tk.Tk):
             fg="#ffffff",
             activebackground="#505050",
             width=10,
-            height=5,  # approximate “big” button
+            height=5,
         )
         self.mic_button.pack(side="left", expand=True, fill="both")
 
-        # "List" button (no action assigned in original code)
         self.list_button = tk.Button(
             container,
             text="List",
-            command=self.show_transcriptions,  #  <-- hook it up
+            command=self.show_transcriptions,
             bg="#3e3e42",
             fg="#ffffff",
             activebackground="#505050",
@@ -234,11 +220,6 @@ class MainWindow(tk.Tk):
         self.list_button.pack(side="left", expand=True, fill="both")
 
     def build_second_screen(self):
-        """
-        Second screen with top row of buttons (Record, Stop, Back, Language)
-        and two text boxes side by side for transcription and improved text.
-        """
-        # Top row for buttons
         top_frame = tk.Frame(self.second_screen, bg="#2d2d30")
         top_frame.pack(side="top", fill="x", pady=5)
 
@@ -265,7 +246,7 @@ class MainWindow(tk.Tk):
             height=1,
         )
         self.stop_button.pack(side="left", padx=5)
-        self.stop_button.pack_forget()  # hidden by default
+        self.stop_button.pack_forget()
 
         self.back_button = tk.Button(
             top_frame,
@@ -291,7 +272,6 @@ class MainWindow(tk.Tk):
         )
         self.language_button.pack(side="left", padx=5)
 
-        # Middle frame for the two text boxes
         textboxes_frame = tk.Frame(self.second_screen, bg="#2d2d30")
         textboxes_frame.pack(expand=True, fill="both")
 
@@ -337,7 +317,6 @@ class MainWindow(tk.Tk):
         )
         self.recorder_thread.orchestrator = self.orchestrator
         self.recorder_thread.case_id = self.case_id_selected
-
         self.recorder_thread.start()
 
     def stop_recording(self):
@@ -347,18 +326,39 @@ class MainWindow(tk.Tk):
             def wait_for_thread():
                 self.recorder_thread.join()
                 self.recorder_thread = None
+                threading.Thread(target=self.post_analysis).start()
 
             threading.Thread(target=wait_for_thread).start()
 
         self.stop_button.pack_forget()
         self.record_button.pack(side="left", padx=5)
 
+    def post_analysis(self):
+        if not self.case_id_selected:
+            return
+
+        info_units = self.orchestrator.get_info_unit_list(self.case_id_selected)
+        if not info_units:
+            print("No info units found for analysis.")
+            return
+
+        all_text = "\n".join([unit.text for unit in info_units])
+        try:
+            result = self.llm.analyze(all_text, all_facts=info_units)
+        except Exception as e:
+            result = f"Error during analysis: {e}"
+
+        self.analysis_textbox.after(0, lambda: self.update_analysis_box(result))
+
+    def update_analysis_box(self, content):
+        self.analysis_textbox.delete("1.0", tk.END)
+        self.analysis_textbox.insert(tk.END, content)
+
     def handle_transcription(self, transcription):
         self.transcription_textbox.delete("1.0", tk.END)
-        if isinstance(transcription, str):
-            self.transcription_textbox.insert(tk.END, transcription)
-        else:
-            self.transcription_textbox.insert(tk.END, "")
+        self.transcription_textbox.insert(
+            tk.END, transcription if isinstance(transcription, str) else ""
+        )
 
     def handle_improved_transcription(self, improved):
         self.improved_transcription_textbox.delete("1.0", tk.END)
@@ -366,18 +366,17 @@ class MainWindow(tk.Tk):
 
     def handle_analysis(self, analysis):
         self.analysis_textbox.delete("1.0", tk.END)
-        if isinstance(analysis, str):
-            self.analysis_textbox.insert(tk.END, analysis)
-        else:
-            self.analysis_textbox.insert(tk.END, "")
+        self.analysis_textbox.insert(
+            tk.END, analysis if isinstance(analysis, str) else ""
+        )
 
     def toggle_language(self):
         if self.language == Language.RUSSIAN.value:
             self.language = Language.KAZAKH.value
-            self.language_button.config(Language.KAZAKH.value)
+            self.language_button.config(text=Language.KAZAKH.value)
         else:
             self.language = Language.RUSSIAN.value
-            self.language_button.config(Language.RUSSIAN.value)
+            self.language_button.config(text=Language.RUSSIAN.value)
 
     def show_transcriptions(self):
         if not self.case_id_selected:
@@ -408,7 +407,6 @@ class MainWindow(tk.Tk):
         details = tk.Text(popup, bg="#1e1e1e", fg="#c0c0c0", state="disabled")
         details.pack(side="left", fill="both", expand=True, padx=5, pady=5)
 
-        # map listbox index -> record
         idx_to_rec = {}
         for idx, rec in enumerate(records):
             label = f"{rec.id}: {rec.title}"
@@ -420,7 +418,6 @@ class MainWindow(tk.Tk):
             if not sel:
                 return
             rec = idx_to_rec[sel[0]]
-
             info = (
                 f"ID: {rec.id}\n"
                 f"Title: {rec.title}\n"
@@ -446,7 +443,4 @@ def main():
 
 
 if __name__ == "__main__":
-
-    import os
-
     main()
