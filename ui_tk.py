@@ -36,52 +36,66 @@ class RecorderThread(threading.Thread):
         self.on_improved_transcription_done = on_improved_transcription_done
         self.on_analysis_done = on_analysis_done
         self.orchestrator: Orchestrator = None
-        self.case_id = None
+        self.case_id = None        
+        # accumulator for live transcript
+        self._accumulated = ""
 
     def run(self):
-        while not self._stop_flag:
-            text, mp3_path = self.transcriber.record_and_transcribe(
-                # chunk_length_s=self.chunk_length_s
-            )
+        self._accumulated = ""
+        last_known_transcription = ""
 
-            if self.on_transcription_done:
-                self.on_transcription_done(text)
-            time.sleep(0.1)
+        def background_record():
+            self._final_text, self._final_mp3 = self.transcriber.record_and_transcribe()
 
-        # Once stopped, read the collected transcription from file
-        transcription = ""
-        with open(config.TRANSCRIPTION_RESULT_PATH, "r", encoding="utf-8") as f:
-            transcription = f.read()
+        # Start recording in background
+        recording_thread = threading.Thread(target=background_record)
+        recording_thread.start()
+
+        # Poll the result file for updates
+        while not self._stop_flag and recording_thread.is_alive():
+            time.sleep(0.5)
+
+            try:
+                with open(config.TRANSCRIPTION_RESULT_PATH, "r", encoding="utf-8") as f:
+                    current = f.read().strip()
+            except FileNotFoundError:
+                current = ""
+
+            if current and current != last_known_transcription:
+                new_content = current[len(last_known_transcription):].strip()
+                last_known_transcription = current
+                self._accumulated = current
+                if new_content and self.on_transcription_done:
+                    self.on_transcription_done(current)
+
+        # Wait for the recording thread to finish
+        recording_thread.join()
+
+        # Final update (just in case)
+        final_text = self._accumulated.strip() or getattr(self, "_final_text", "")
+        mp3_path = getattr(self, "_final_mp3", "")
 
         if self.on_transcription_done:
-            self.on_transcription_done(transcription)
+            self.on_transcription_done(final_text)
 
-        improved = self.llm.improve_transcription(transcription)
-
-        # Improve transcription based on current language
-        # if self.language == Language.RUSSIAN.value:
-        #     improved = self.llm.improve_russian_transcription(transcription)
-        # else:
-        #     improved = self.llm.improve_kazakh_transcription(transcription)
+        improved = self.llm.improve_transcription(final_text)
 
         if self.on_improved_transcription_done:
             self.on_improved_transcription_done(improved)
 
         info_units_unprocessed = self.llm.summarize(improved)
-
         info_units = info_units_unprocessed.split("\n")
 
         if self.on_analysis_done:
             self.on_analysis_done(info_units_unprocessed)
 
         created_transcription = None
-        # Save transcription to database
         if self.orchestrator and self.case_id:
             created_transcription = self.orchestrator.create_transcription(
                 {
                     "title": f"Transcription at {time.strftime('%Y-%m-%d %H:%M:%S')}",
                     "case_id": self.case_id,
-                    "full_text": transcription,
+                    "full_text": final_text,
                     "improved_text": improved,
                     "description": "",
                     "mp3_url": mp3_path,
@@ -89,15 +103,14 @@ class RecorderThread(threading.Thread):
             )
 
         if len(info_units) > 0 and created_transcription:
-            for text in info_units:
+            for text_unit in info_units:
                 self.orchestrator.create_info_unit(
                     case_id=self.case_id,
                     transcription_id=created_transcription.id,
-                    text=text,
+                    text=text_unit,
                     language=self.language,
                 )
 
-        # Clear the file contents
         with open(config.TRANSCRIPTION_RESULT_PATH, "w", encoding="utf-8") as f:
             f.write("")
 
