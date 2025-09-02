@@ -1,4 +1,5 @@
 # dopros
+<img width="945" height="370" alt="image" src="https://github.com/user-attachments/assets/bbaa12dc-29f7-4759-9faa-dc4d586f3a0f" />
 
 
 # STEPS TO RUN THE PROJECT:
