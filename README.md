@@ -1,7 +1,9 @@
 # dopros
 <img width="945" height="370" alt="image" src="https://github.com/user-attachments/assets/bbaa12dc-29f7-4759-9faa-dc4d586f3a0f" />
+<img width="693" height="493" alt="image" src="https://github.com/user-attachments/assets/e6267008-e7b2-4eb0-984f-82d2ccfd12d5" />
 
-
+Link to the presentation of the project:
+https://www.canva.com/design/DAGo5fG-D04/EppNcWLOK-9bSkIAQO5AcQ/edit?utm_content=DAGo5fG-D04&utm_campaign=designshare&utm_medium=link2&utm_source=sharebutton
 # STEPS TO RUN THE PROJECT:
 
 ## Prerequisites:
